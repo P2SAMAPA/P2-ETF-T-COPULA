@@ -36,13 +36,15 @@ class VineCopulaModel:
         for col in self.tickers:
             data = returns[col].values
             if self.margin_model == 'empirical':
+                # Use scipy's ECDF (newer API)
+                ecdf_obj = stats.ecdf(data)
                 self.marginals[col] = {
-                    'ecdf': stats.ecdf(data),
+                    'ecdf': ecdf_obj,
                     'mean': np.mean(data),
                     'std': np.std(data)
                 }
             else:
-                # Fit skew-t (simplified as t for now)
+                # Fit t-distribution
                 params = stats.t.fit(data)
                 self.marginals[col] = {'dist': stats.t, 'params': params}
         
@@ -65,6 +67,7 @@ class VineCopulaModel:
     def _to_uniform(self, data, ticker):
         """Convert data to uniform using fitted marginal."""
         if self.margin_model == 'empirical':
+            # scipy.stats.ecdf returns an object with cdf attribute
             return self.marginals[ticker]['ecdf'].cdf.evaluate(data)
         else:
             dist = self.marginals[ticker]['dist']
@@ -74,7 +77,8 @@ class VineCopulaModel:
     def _from_uniform(self, u, ticker):
         """Convert uniform back to original scale."""
         if self.margin_model == 'empirical':
-            return self.marginals[ticker]['ecdf'].cdf.quantile(u)
+            # Use quantiles method (plural) for inverse CDF
+            return self.marginals[ticker]['ecdf'].cdf.quantiles(u)
         else:
             dist = self.marginals[ticker]['dist']
             params = self.marginals[ticker]['params']

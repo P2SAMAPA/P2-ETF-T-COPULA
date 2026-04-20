@@ -36,10 +36,10 @@ class VineCopulaModel:
         for col in self.tickers:
             data = returns[col].values
             if self.margin_model == 'empirical':
-                # Use scipy's ECDF (newer API)
-                ecdf_obj = stats.ecdf(data)
+                # Store sorted data for quantile function
                 self.marginals[col] = {
-                    'ecdf': ecdf_obj,
+                    'sorted_data': np.sort(data),
+                    'ecdf': stats.ecdf(data),
                     'mean': np.mean(data),
                     'std': np.std(data)
                 }
@@ -67,7 +67,6 @@ class VineCopulaModel:
     def _to_uniform(self, data, ticker):
         """Convert data to uniform using fitted marginal."""
         if self.margin_model == 'empirical':
-            # scipy.stats.ecdf returns an object with cdf attribute
             return self.marginals[ticker]['ecdf'].cdf.evaluate(data)
         else:
             dist = self.marginals[ticker]['dist']
@@ -76,9 +75,17 @@ class VineCopulaModel:
     
     def _from_uniform(self, u, ticker):
         """Convert uniform back to original scale."""
+        u = np.clip(u, 1e-6, 1-1e-6)
         if self.margin_model == 'empirical':
-            # Use quantiles method (plural) for inverse CDF
-            return self.marginals[ticker]['ecdf'].cdf.quantiles(u)
+            # Use empirical quantile function
+            sorted_data = self.marginals[ticker]['sorted_data']
+            n = len(sorted_data)
+            # Linear interpolation for quantiles
+            idx = u * (n - 1)
+            lo = np.floor(idx).astype(int)
+            hi = np.ceil(idx).astype(int)
+            w = idx - lo
+            return (1 - w) * sorted_data[lo] + w * sorted_data[hi]
         else:
             dist = self.marginals[ticker]['dist']
             params = self.marginals[ticker]['params']

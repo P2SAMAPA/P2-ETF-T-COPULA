@@ -46,13 +46,13 @@ def return_badge(ret):
         return f'<span class="return-positive">+{ret*100:.2f}%</span>'
     return f'<span class="return-negative">{ret*100:.2f}%</span>'
 
-def display_hero_card(ticker: str, score: float, exp_ret: float, var95: float, es95: float):
+def display_hero_card(ticker: str, exp_ret: float, score: float, var95: float, es95: float):
     st.markdown(f"""
     <div class="hero-card">
-        <div style="font-size: 1.2rem; opacity: 0.8;">🍇 TOP PICK (Tail‑Adjusted Score)</div>
+        <div style="font-size: 1.2rem; opacity: 0.8;">🍇 TOP PICK (Highest Expected Return)</div>
         <div class="hero-ticker">{ticker}</div>
-        <div class="hero-score">Score: {score:.4f}</div>
-        <div>Exp Return: {return_badge(exp_ret)} | VaR 95%: {var95*100:.2f}% | ES 95%: {es95*100:.2f}%</div>
+        <div class="hero-score">Exp Return: {return_badge(exp_ret)}</div>
+        <div>Score: {score:.4f} | VaR 95%: {var95*100:.2f}% | ES 95%: {es95*100:.2f}%</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -61,12 +61,12 @@ def display_forecast_table(universe_data: dict):
     for ticker, m in universe_data.items():
         rows.append({
             'Ticker': ticker,
-            'Score': f"{m['combined_score']:.4f}",
             'Exp Return': f"{m['expected_return']*100:.2f}%",
+            'Score': f"{m['combined_score']:.4f}",
             'VaR 95%': f"{m['var_95']*100:.2f}%",
             'ES 95%': f"{m['es_95']*100:.2f}%"
         })
-    df = pd.DataFrame(rows).sort_values('Score', ascending=False)
+    df = pd.DataFrame(rows).sort_values('Exp Return', ascending=False)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 # --- Sidebar ---
@@ -105,11 +105,11 @@ with tab1:
             if key in universes_data:
                 picks = top_picks.get(key, [])
                 if picks:
-                    top = picks[0]
+                    top = picks[0]  # Already sorted by expected return
                     st.markdown("### 🏆 Top Pick for Tomorrow")
-                    display_hero_card(top['ticker'], top['combined_score'],
-                                      top['expected_return'], top['var_95'], top['es_95'])
-                st.markdown("### 📋 All ETFs (Ranked by Tail‑Adjusted Score)")
+                    display_hero_card(top['ticker'], top['expected_return'],
+                                      top['combined_score'], top['var_95'], top['es_95'])
+                st.markdown("### 📋 All ETFs (Ranked by Expected Return)")
                 display_forecast_table(universes_data[key])
 
 with tab2:
@@ -124,7 +124,12 @@ with tab2:
             for label, winfo in sorted(shrinking.items(), key=lambda x: x[1]['start_year'], reverse=True):
                 top = winfo['top_picks'].get(key, {})
                 if top:
-                    rows.append({'Window': label, 'Top Pick': top['ticker'], 'Score': f"{top['combined_score']:.4f}"})
+                    rows.append({
+                        'Window': label,
+                        'Top Pick': top['ticker'],
+                        'Exp Return': f"{top['expected_return']*100:.2f}%",
+                        'Score': f"{top['combined_score']:.4f}"
+                    })
             if rows:
                 df = pd.DataFrame(rows)
                 st.dataframe(df, use_container_width=True, hide_index=True)

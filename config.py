@@ -31,7 +31,7 @@ LOOKBACK_WINDOW = 504                 # Days of returns to fit copula
 N_SIMULATIONS = 10000                 # Number of Monte Carlo scenarios
 MARGIN_MODEL = "empirical"            # "empirical" or "skewt"
 VINE_STRUCTURE = "rvine"              # R-vine structure selection (automatic)
-TAIL_ADJUSTMENT_LAMBDA = 0.5          # Weight for tail risk in combined score (0 = pure expected return)
+TAIL_ADJUSTMENT_LAMBDA = 0.1          # Weight for tail risk in combined score (0 = pure expected return)
 MIN_OBSERVATIONS = 252                # Minimum observations required
 
 # --- Shrinking Windows ---

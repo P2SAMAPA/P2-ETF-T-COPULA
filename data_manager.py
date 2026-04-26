@@ -1,10 +1,11 @@
 """
-Data loading and preprocessing for Vine Copula engine.
+Data loading and preprocessing for T‑COPULA engine.
 """
 
 import pandas as pd
 import numpy as np
 from huggingface_hub import hf_hub_download
+from sklearn.preprocessing import StandardScaler
 import config
 
 def load_master_data() -> pd.DataFrame:
@@ -23,10 +24,10 @@ def load_master_data() -> pd.DataFrame:
     return df
 
 def prepare_returns_matrix(df_wide: pd.DataFrame, tickers: list) -> pd.DataFrame:
-    """Prepare a wide-format DataFrame of log returns with Date index."""
-    available_tickers = [t for t in tickers if t in df_wide.columns]
+    """Prepare wide‑format log returns."""
+    available = [t for t in tickers if t in df_wide.columns]
     df_long = pd.melt(
-        df_wide, id_vars=['Date'], value_vars=available_tickers,
+        df_wide, id_vars=['Date'], value_vars=available,
         var_name='ticker', value_name='price'
     )
     df_long = df_long.sort_values(['ticker', 'Date'])
@@ -34,4 +35,11 @@ def prepare_returns_matrix(df_wide: pd.DataFrame, tickers: list) -> pd.DataFrame
         lambda x: np.log(x / x.shift(1))
     )
     df_long = df_long.dropna(subset=['log_return'])
-    return df_long.pivot(index='Date', columns='ticker', values='log_return')[available_tickers].dropna()
+    return df_long.pivot(index='Date', columns='ticker', values='log_return')[available].dropna()
+
+def prepare_macro_features(df_wide: pd.DataFrame) -> pd.DataFrame:
+    """Extract macro columns and forward‑fill."""
+    macro_cols = [c for c in config.MACRO_COLS if c in df_wide.columns]
+    macro_df = df_wide[['Date'] + macro_cols].copy()
+    macro_df = macro_df.set_index('Date').ffill().dropna()
+    return macro_df

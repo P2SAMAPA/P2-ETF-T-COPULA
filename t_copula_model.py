@@ -1,6 +1,6 @@
 """
 Multivariate Student‑t Copula (Demarta & McNeil, 2004).
-Pure scipy implementation with optional GARCH+skew‑t marginals.
+scipy/numpy implementation with optional GARCH+skew‑t marginals.
 """
 
 import numpy as np
@@ -21,7 +21,7 @@ class TStudentCopula:
     def __init__(self, df_estimation_method="tail_dep", use_garch=config.USE_GARCH):
         self.corr = None
         self.df = None
-        self.marginal_params = {}   # {ticker: {"garch_model": ..., "skewt_params": ...}}
+        self.marginal_params = {}
         self.tickers = None
         self.fitted = False
         self.df_method = df_estimation_method
@@ -36,12 +36,12 @@ class TStudentCopula:
         if n < 2:
             return False
 
-        # ---- Fit marginals: GARCH(1,1) + skew‑t or empirical ----
+        # ---- Fit marginals: GARCH(1,1) + skew‑t on the EXACT data passed ----
         if self.use_garch:
             self._fit_garch_marginals(returns)
-            # Convert returns to uniforms using parametric CDF
+            # Build uniforms from standardized residuals
             U = np.column_stack([
-                self._to_uniform_parametric(returns[col].values, col)
+                self._to_uniform_parametric(returns[col], col)
                 for col in self.tickers
             ])
         else:
@@ -77,7 +77,7 @@ class TStudentCopula:
     # 2. GARCH + skew‑t marginal fitting
     # ------------------------------------------------------------------
     def _fit_garch_marginals(self, returns):
-        """Fit GARCH(1,1) with skew‑t innovations to each ETF."""
+        """Fit GARCH(1,1) with skew‑t innovations to each ETF column in returns."""
         for col in self.tickers:
             ret = returns[col].dropna() * 100   # scale to percentage for numerical stability
             try:
@@ -85,22 +85,19 @@ class TStudentCopula:
                                   p=config.GARCH_P, q=config.GARCH_Q,
                                   dist=config.GARCH_DIST)
                 res = model.fit(disp='off')
-                # Extract standardized residuals
-                std_resid = res.resid / res.conditional_volatility
+                # Extract standardized residuals (aligned to ret)
+                std_resid = res.std_resid
                 # Fit skew‑t to standardized residuals
-                skewt_params = stats.jf_skew_t.fit(std_resid)
+                skewt_params = stats.jf_skew_t.fit(std_resid.dropna())
                 self.marginal_params[col] = {
                     'garch_result': res,
                     'skewt_params': skewt_params,
-                    'last_return': ret.iloc[-1],
-                    'conditional_vol': res.conditional_volatility.iloc[-1]
                 }
             except Exception as e:
                 print(f"    GARCH fit failed for {col}: {e}. Falling back to empirical.")
                 self._fallback_empirical(returns[col], col)
 
     def _fallback_empirical(self, series, col):
-        """Fallback to empirical marginals for a single ETF."""
         data = series.dropna().values
         self.marginal_quantiles[col] = np.sort(data)
         self.marginal_ecdfs[col] = stats.ecdf(data)
@@ -115,28 +112,17 @@ class TStudentCopula:
         return self.marginal_ecdfs[ticker].cdf.evaluate(data)
 
     def _to_uniform_parametric(self, data, ticker):
-        """Convert returns to uniform using GARCH + skew‑t CDF."""
+        """
+        For a pandas Series `data` (the returns used to fit the GARCH),
+        compute uniform via the fitted skew‑t CDF applied to standardized residuals.
+        """
         params = self.marginal_params.get(ticker)
         if params is None:
-            # should not happen, but fallback
-            return stats.ecdf(data).cdf.evaluate(data)
-        # For each return, we need the GARCH conditional mean and volatility at that time
-        # We approximate by using the unconditional GARCH model's estimated parameters
-        # to compute conditional mean/vol for each point. For simplicity, we use the
-        # model's fitted conditional volatility and mean.
-        # Actually, to get a proper PIT, we need to use the one-step-ahead forecasts.
-        # We'll use the standardized residuals already stored.
-        garch_res = params['garch_result']
-        cond_mean = garch_res.params['mu'] / 100   # back to decimal
-        cond_vol = garch_res.conditional_volatility / 100
-        # Align with data
-        aligned_vol = cond_vol.reindex(data.index if isinstance(data, pd.Series) else pd.Index(range(len(data))), method='ffill')
-        aligned_mean = cond_mean
-        if isinstance(aligned_vol, pd.Series):
-            aligned_vol = aligned_vol.values
-        z = (data - aligned_mean) / aligned_vol
+            return stats.ecdf(data).cdf.evaluate(data.values)
+        res = params['garch_result']
+        std_resid = res.std_resid   # pandas Series aligned with data
         skewt_dist = stats.jf_skew_t(*params['skewt_params'])
-        return skewt_dist.cdf(z)
+        return skewt_dist.cdf(std_resid.values)
 
     def _from_uniform(self, u, ticker):
         u = np.clip(u, 1e-6, 1 - 1e-6)
@@ -154,7 +140,6 @@ class TStudentCopula:
         """Inverse skew‑t CDF, then scale by GARCH forecast."""
         params = self.marginal_params.get(ticker)
         if params is None:
-            # fallback
             sorted_data = self.marginal_quantiles[ticker]
             n = len(sorted_data)
             idx = u * (n - 1)
@@ -164,9 +149,8 @@ class TStudentCopula:
             return (1 - w) * sorted_data[lo] + w * sorted_data[hi]
         skewt_dist = stats.jf_skew_t(*params['skewt_params'])
         z = skewt_dist.ppf(u)
-        # Forecast conditional volatility for next period
         forecast = params['garch_result'].forecast(horizon=1, reindex=False)
-        cond_vol_forecast = forecast.variance.iloc[-1, 0] ** 0.5 / 100  # convert from pct to decimal
+        cond_vol_forecast = forecast.variance.iloc[-1, 0] ** 0.5 / 100
         cond_mean = params['garch_result'].params['mu'] / 100
         return cond_mean + z * cond_vol_forecast
 
@@ -190,7 +174,7 @@ class TStudentCopula:
             return 30.0
         from scipy.optimize import brentq
         def f(nu):
-            arg = np.sqrt((nu + 1) * 0.7 / 1.3)  # approximate rho
+            arg = np.sqrt((nu + 1) * 0.7 / 1.3)
             return 2 * stats.t.cdf(-arg, df=nu + 1) - lam
         try:
             nu = brentq(f, 2.5, 50.0)

@@ -2,7 +2,7 @@ name: Daily T‑COPULA Run
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5'
+    - cron: '0 03 * * 1-5'
   workflow_dispatch:
 
 jobs:
